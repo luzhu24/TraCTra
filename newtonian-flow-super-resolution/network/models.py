@@ -82,8 +82,13 @@ def residual_block_periodic_conv_3d(x, n_filters,
     + skip
   """
   layer_input = x
-  # enforce same channels for residual add
-  n_filters = x.shape[-1]
+
+  # Project the residual branch only when the target number of channels changes.
+  # This allows n_filters to vary across U-Net levels.
+  if x.shape[-1] != n_filters:
+    layer_input = Conv3D(
+        n_filters, (1,1,1), padding='same', strides=strides,
+        activation='linear')(layer_input)
 
   x = BatchNormalization()(x)
   x = Activation(activation)(x)
@@ -185,6 +190,7 @@ def newt3d_single_sresol_unet(
     N_layer=2,
     N_deep=4,
     N_grow=3,
+    filter_factor=2,
     kernel=(3,3,3),
     input_channels=1,
     output_channels=3,
@@ -213,8 +219,14 @@ def newt3d_single_sresol_unet(
 
   # ---- Encoder ----
   skips = []
-  filters = N_filters
+  filter_schedule = [
+      int(round(N_filters * (filter_factor ** lev)))
+      for lev in range(N_deep)
+  ]
+
   for lev in range(N_deep):
+    filters = filter_schedule[lev]
+
     # Local processing at this scale
     for _ in range(max(1, N_layer)):
       x = residual_block_periodic_conv_3d(x, filters, kernel=kernel,
@@ -223,7 +235,6 @@ def newt3d_single_sresol_unet(
 
     if lev < N_deep - 1:
       x = tf.keras.layers.AveragePooling3D(pool_size=2)(x)
-      filters *= 2
 
   # ---- Bottleneck ----
   for _ in range(max(1, N_layer)):
@@ -232,7 +243,7 @@ def newt3d_single_sresol_unet(
 
   # ---- Decoder ----
   for lev in reversed(range(N_deep - 1)):
-    filters //= 2
+    filters = filter_schedule[lev]
 
     x = tf.keras.layers.UpSampling3D(size=2)(x)
 
@@ -265,6 +276,7 @@ def newt3d_sresol_unet(
     N_layer=2,
     N_deep=4,
     N_grow=3,
+    filter_factor=2,
     kernel=(3,3,3),
     input_channels=1,
     output_channels=3):
@@ -276,7 +288,8 @@ def newt3d_sresol_unet(
   inp = Input(shape=(Nt, Nx_coarse, Ny_coarse, Nz_coarse, input_channels), name="traj_input")
 
   vol_model = newt3d_single_sresol_unet(Nx_coarse, Ny_coarse, Nz_coarse,
-      N_filters=N_filters, N_layer=N_layer, N_deep=N_deep, N_grow=N_grow, kernel=kernel,
+      N_filters=N_filters, N_layer=N_layer, N_deep=N_deep, N_grow=N_grow,
+      filter_factor=filter_factor, kernel=kernel,
       input_channels=input_channels, output_channels=output_channels,)
 
   out = TimeDistributed(vol_model, name="per_t_3d_unet")(inp)

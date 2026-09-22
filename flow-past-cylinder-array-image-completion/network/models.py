@@ -44,10 +44,14 @@ def residual_block_periodic_conv_LZ(x, n_filters,
                                  kernel=(1,1), strides=(1,1),
                                  n_pad_rows=1, n_pad_cols=1,
                                  activation='gelu'):
-  layer_input = x 
+  layer_input = x
 
-  # number of filters must match input = x.shape[-1]
-  n_filters = x.shape[-1]
+  # Project the residual branch when the number of channels changes.
+  # This allows n_filters to follow the U-Net level instead of being
+  # forced to x.shape[-1].
+  if x.shape[-1] != n_filters:
+    layer_input = Conv2D(n_filters, (1,1), padding='same',
+                         strides=strides, activation='linear')(layer_input)
 
   x = BatchNormalization()(x)
   x = Activation(activation)(x)
@@ -58,7 +62,7 @@ def residual_block_periodic_conv_LZ(x, n_filters,
   x = BatchNormalization()(x)
   x = Activation(activation)(x)
 
-  x = periodic_convolution(x, n_filters, kernel, strides=strides,
+  x = periodic_convolution(x, n_filters, kernel, strides=(1,1),
                            n_pad_rows=n_pad_rows, n_pad_cols=n_pad_cols, activation='linear')
 
   x = keras.layers.add([x, layer_input])
@@ -207,6 +211,7 @@ def newt_single_frame_fpc(
     kernel=(3,3),
     input_channels=1,
     output_channels=1,
+    filter_factor=2,
 ):
     """
     Periodic ResNet + Encoder-Decoder:
@@ -221,9 +226,12 @@ def newt_single_frame_fpc(
 
     # ---- Encoder ----
     skips = []
-    filters = N_filters
+    filter_schedule = [int(round(N_filters * (filter_factor ** lev)))
+                       for lev in range(N_levels)]
 
     for lev in range(N_levels):
+        filters = filter_schedule[lev]
+
         for _ in range(N_layer):
             x = residual_block_periodic_conv_LZ(x, filters, kernel=kernel, n_pad_rows=kernel[0]-1, n_pad_cols=kernel[1]-1, )
 
@@ -231,14 +239,14 @@ def newt_single_frame_fpc(
 
         if lev < N_levels - 1:
             x = tf.keras.layers.AveragePooling2D(pool_size=2)(x)
-            filters *= 2
 
+    filters = filter_schedule[-1]
     for _ in range(max(1, N_layer)):
         x = residual_block_periodic_conv_LZ(x, filters, kernel=kernel, n_pad_rows=kernel[0]-1, n_pad_cols=kernel[1]-1, )
 
     # ---- Decoder ----
     for lev in reversed(range(N_levels - 1)):
-        filters //= 2
+        filters = filter_schedule[lev]
 
         x = tf.keras.layers.UpSampling2D(size=2, interpolation="bilinear")(x)
 
@@ -260,14 +268,14 @@ def newt_single_frame_fpc(
 
 
 
-def newt_VC_traj_fpc(Nx, Ny, Nt, N_filters, N_layer=2, N_levels=3, kernel=(3,3), input_channels=1, output_channels=3):
+def newt_VC_traj_fpc(Nx, Ny, Nt, N_filters, N_layer=2, N_levels=3, kernel=(3,3), input_channels=1, output_channels=3, filter_factor=2):
   """ Build a model to perform polymer stress prediction. Apply lattent variables """
 
   input_vort = Input(shape=(Nt, Nx, Ny, input_channels), name="vort_traj_input")
 
 
   frame_model = newt_single_frame_fpc(Nx, Ny, N_filters=N_filters,N_layer=N_layer,N_levels=N_levels, kernel=kernel,
-                                  input_channels=input_channels,output_channels=output_channels,)
+                                  input_channels=input_channels,output_channels=output_channels, filter_factor=filter_factor,)
 
   output_traj = TimeDistributed(frame_model, name="per_t_cnn")(input_vort)
 

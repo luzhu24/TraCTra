@@ -43,6 +43,7 @@ def loadnpz_multitraj(field_names, data_loc, file_front, file_end=".npz",
     """
     pattern = os.path.join(data_loc, f"{file_front}_*{file_end}")
     filenames = sorted(glob.glob(pattern))
+    print (filenames)
 
     if n_files is not None:
         filenames = filenames[:n_files]
@@ -148,8 +149,8 @@ def keras_gen_offset(arr, idx, batch_size, *,
 # -------------------------
 # Main
 # -------------------------
-data_loc = "/mnt/ceph_rbd/newt/DNS/FPC_re5000/"
-weight_loc = "/mnt/ceph_rbd/newt/CNN_FPC_fc/"
+data_loc = "../data/training/"
+weight_loc = "./"
 file_front = "data_fpc"
 file_end = ".npz"
 n_files = None
@@ -199,6 +200,7 @@ n_layer = 1
 n_level = 5
 kernel = (3,3)
 n_filters=16
+filter_factor=1.5
 
 
 grid = cfd.grids.Grid((Nx, Ny), domain=((-Lx/2., Lx/2.), (-Ly / 2.0, Ly / 2.0)))
@@ -250,7 +252,8 @@ real_traj_offset_fn = partial(im.real_to_real_traj_fn_fpc, traj_fn=jax.vmap(traj
 # -------------------------
 newt_model = models.newt_VC_traj_fpc(Nx, Ny, n_snapshots,
     N_filters=n_filters, N_layer=n_layer, N_levels=n_level, kernel=kernel, 
-    input_channels=input_channels, output_channels=output_channels)
+    input_channels=input_channels, output_channels=output_channels,
+    filter_factor=filter_factor)
 
 
 loss_fn = jax.jit(partial(lf.mse_and_traj_vor_weighted,

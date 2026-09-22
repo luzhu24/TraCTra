@@ -55,13 +55,13 @@ def make_subtrajectories(A, dT, dt_dns, stride=1, T_interval=1):
 
 
 
-data_loc = '/mnt/ceph_rbd/flow3d/DNS/'
-weight_loc = '/mnt/ceph_rbd/flow3d/stratified3d_re500/'
+data_loc = '../data/training_data/'
+weight_loc = './'
 file_front = 'data_re500_cubic'
 file_end = '.npz'
 n_files = 200
 
-loadweights = True
+loadweights = False
 weight_name = 'stf3d_best_traj_VC.test.weights.h5'
 snapshots,param,geom = loadnpz(['vx','vy','vz','r'],data_loc+file_front+file_end)
 re,pr,ri,theta,kf,sbk = param
@@ -82,7 +82,7 @@ dt_stable = 0.02
 V_weight,C_weight=1,1
 
 # training hyp
-batch_size = 2
+batch_size = 1
 lr_traj = 5e-5#
 nval = 4
 n_traj_steps = 1000
@@ -90,6 +90,7 @@ n_layer = 2
 n_level = 3
 kernel = (3,3,3)
 n_filters=16
+filter_factor=1.5
 
 grid = cfd.grids.Grid((Nx, Ny, Nz), domain=((0, Lx), (-Ly/2., Ly/2.), (-Lz/2., Lz/2.)))
 
@@ -120,8 +121,49 @@ real_traj_fn = partial(im.real_to_real_traj_fn_stf3d,
                        traj_fn=jax.vmap(trajectory_fn)) 
 
 # build model 
-stf3d_model = models.density_to_uvw_traj_unet_3d(Nx, Ny, Nz, n_snapshots, N_filters=n_filters, N_layer=n_layer, N_levels=n_level, kernel=kernel, input_channels=n_input, output_channels=n_output)
+stf3d_model = models.density_to_uvw_traj_unet_3d(
+    Nx, Ny, Nz, n_snapshots,
+    N_filters=n_filters, N_layer=n_layer, N_levels=n_level, kernel=kernel,
+    input_channels=n_input, output_channels=n_output,
+    filter_factor=filter_factor)
 
+
+print("\n================ Model Summary ================\n")
+stf3d_model.summary()
+
+
+def print_model_layers(model, indent=0):
+    """Print layer-by-layer information, including nested models."""
+    prefix = " " * indent
+    for i, layer in enumerate(model.layers):
+        try:
+            input_shape = layer.input.shape
+        except (AttributeError, ValueError):
+            input_shape = "N/A"
+
+        try:
+            output_shape = layer.output.shape
+        except (AttributeError, ValueError):
+            output_shape = "N/A"
+
+        print(
+            f"{prefix}[{i:02d}] {layer.name:<30s} "
+            f"{layer.__class__.__name__:<20s} "
+            f"input={input_shape} output={output_shape} "
+            f"params={layer.count_params()}"
+        )
+
+        sublayer = getattr(layer, "layer", None)
+        if isinstance(sublayer, keras.Model):
+            print(f"{prefix}     -> nested model: {sublayer.name}")
+            print_model_layers(sublayer, indent=indent + 8)
+        elif isinstance(layer, keras.Model):
+            print_model_layers(layer, indent=indent + 8)
+
+
+print("\n================ Layer Information ================\n")
+print_model_layers(stf3d_model)
+print("\n===================================================\n")
 
 
 loss_fn = jax.jit(partial(lf.traj_VC_stf3d_r2v, trajectory_rollout_fn=real_traj_fn, alpha=V_weight, beta=C_weight, vmax=5))

@@ -93,9 +93,9 @@ def keras_gen_sr_pretrain(arr, idx, batch_size, *,
 
 
 
-data_loc = '/mnt/ceph_rbd/flow3d/DNS/'
-weight_loc = '/mnt/ceph_rbd/flow3d/newt3d_re10000/'
-file_front = 'data_newt_re10000_long'
+data_loc = '../data/training/'
+weight_loc = './'
+file_front = 'data_newt_re10000_T1000N200'
 file_end = '.npz'
 n_files = 200
 
@@ -127,6 +127,7 @@ alphal,betal = 1,1
 N_grow = 4
 filter_size = 2**N_grow
 N_filters=16 
+filter_factor=1.5
 N_layer=2
 N_deep=4
 kernel=(3,3,3)
@@ -168,7 +169,10 @@ real_traj_fn = partial(im.real_to_real_traj_fn_newt3d, vel2vort_fn=jax.vmap(vel2
 # build model
 newt_model = models.newt3d_sresol_unet(Nx_coarse, Ny_coarse, Nz_coarse,n_snapshots,
                                     N_filters=N_filters, N_layer=N_layer, N_deep=N_deep, N_grow=N_grow,
+                                    filter_factor=filter_factor,
                                     kernel=kernel, input_channels=input_channels, output_channels=output_channels)
+
+newt_model.summary()
 
 pooling_fn = jax.jit(im.coarse_pool_trajectory, static_argnums=(1, 2, 3))
 pooling_fn_batched = jax.vmap(partial(pooling_fn, pool_d1=filter_size, pool_d2=filter_size, pool_d3=filter_size))

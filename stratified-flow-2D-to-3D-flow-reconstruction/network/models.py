@@ -74,10 +74,11 @@ def residual_block_periodic_conv_LZ(x, n_filters,
                                  kernel=(1,1), strides=(1,1),
                                  n_pad_rows=1, n_pad_cols=1,
                                  activation='gelu'):
-  layer_input = x 
+  layer_input = x
 
-  # number of filters must match input = x.shape[-1]
-  n_filters = x.shape[-1]
+  # Project the residual shortcut only when the channel count changes.
+  if x.shape[-1] != n_filters:
+    layer_input = Conv2D(n_filters, (1,1), padding='same', strides=strides, activation='linear')(layer_input)
 
   x = BatchNormalization()(x)
   x = Activation(activation)(x)
@@ -207,8 +208,9 @@ def residual_block_periodic_conv_3d(x, n_filters,
     + skip
   """
   layer_input = x
-  # enforce same channels for residual add
-  n_filters = x.shape[-1]
+  # Project the residual shortcut only when the channel count changes.
+  if x.shape[-1] != n_filters:
+    layer_input = Conv3D(n_filters, (1,1,1), padding='same', strides=strides, activation='linear')(layer_input)
 
   x = BatchNormalization()(x)#GN(x)#
   x = Activation(activation)(x)
@@ -325,6 +327,7 @@ def slice_to_uvwr_single_unet_lift3d(
     input_channels=1,
     velocity_channels=3,
     density_channels=1,
+    filter_factor=2,
 ):
   """
   2D density slice -> full 3D (u,v,w,rho)
@@ -353,9 +356,10 @@ def slice_to_uvwr_single_unet_lift3d(
   x = periodic_convolution(inp, N_filters, kernel=kernel2d, n_pad_rows=pad_rows, n_pad_cols=pad_cols, activation="linear" )
 
   skips2d = []
-  filters = N_filters
+  filter_schedule = [int(round(N_filters * (filter_factor ** lev))) for lev in range(N_levels)]
 
   for lev in range(N_levels):
+    filters = filter_schedule[lev]
     for _ in range(N_layer):
       x = residual_block_periodic_conv_LZ(x, filters, kernel=kernel2d, n_pad_rows=pad_rows, n_pad_cols=pad_cols, )
 
@@ -363,9 +367,9 @@ def slice_to_uvwr_single_unet_lift3d(
 
     if lev < N_levels - 1:
       x = tf.keras.layers.AveragePooling2D(pool_size=2)(x)
-      filters *= 2
 
   # 2D bottleneck refinement
+  filters = filter_schedule[-1]
   for _ in range(max(1, N_layer)):
     x = residual_block_periodic_conv_LZ(x, filters, kernel=kernel2d, n_pad_rows=pad_rows, n_pad_cols=pad_cols, )
 
@@ -380,7 +384,7 @@ def slice_to_uvwr_single_unet_lift3d(
 
   # 3D decoder with learned lifted skips
   for lev in reversed(range(N_levels - 1)):
-    filters //= 2
+    filters = filter_schedule[lev]
 
     x = tf.keras.layers.UpSampling3D(size=(2, 2, 2))(x)
 
@@ -428,6 +432,7 @@ def slice_to_uvwr_traj_unet_lift3d(
     input_channels=1,
     velocity_channels=3,
     density_channels=1,
+    filter_factor=2,
 ):
   """
   Apply the 2D-slice -> 3D-volume model at each time step.
@@ -444,7 +449,8 @@ def slice_to_uvwr_traj_unet_lift3d(
       kernel2d=kernel2d, kernel3d=kernel3d,
       input_channels=input_channels,
       velocity_channels=velocity_channels,
-      density_channels=density_channels, )
+      density_channels=density_channels,
+      filter_factor=filter_factor, )
 
   out = TimeDistributed(frame_model, name="per_t_2d_to_3d")(inp)
   return keras.Model(inp, out, name="slice_to_uvwr_traj_unet_lift3d")

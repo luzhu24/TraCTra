@@ -95,7 +95,7 @@ def slicing_traj(m, ax=1, slice_channel=-1,
 
 
 
-data_loc = '/home/zhulu/jax-cfd/flow3d/DNS/'#'/mnt/ceph_rbd/flow3d/DNS/'
+data_loc = '../data/training/'
 weight_loc = './'#'/mnt/ceph_rbd/flow3d/stratified3d_2dto3d_re500/'
 file_front = 'data_re500_T600N300'
 file_end = '.npz'
@@ -128,7 +128,7 @@ V_weight,C_weight=1,1
 
 
 # training hyp
-batch_size = 2
+batch_size = 1
 lr_traj = 5e-5
 nval = 4
 n_traj_steps = 2000
@@ -137,6 +137,7 @@ n_level = 3
 kernel2d = (3,3)
 kernel3d = (3,3,3)
 n_filters=16
+filter_factor=1.5
 
 
 grid = cfd.grids.Grid((Nx, Ny, Nz), domain=((0, Lx), (-Ly/2., Ly/2.), (-Lz/2., Lz/2.)))
@@ -174,7 +175,47 @@ real_traj_fn = partial(im.real_to_real_traj_fn_stf3d,
 
 
 # build model 
-stf3d_model = models.slice_to_uvwr_traj_unet_lift3d(Nx, Ny, Nz, n_snapshots, N_filters=n_filters, N_layer=n_layer, N_levels=n_level, kernel2d=kernel2d, kernel3d=kernel3d, input_channels=input_channels*(1+2*t_offset), velocity_channels=velocity_channels, density_channels=density_channels,)
+stf3d_model = models.slice_to_uvwr_traj_unet_lift3d(
+    Nx, Ny, Nz, n_snapshots,
+    N_filters=n_filters, N_layer=n_layer, N_levels=n_level,
+    kernel2d=kernel2d, kernel3d=kernel3d,
+    input_channels=input_channels*(1+2*t_offset),
+    velocity_channels=velocity_channels, density_channels=density_channels,
+    filter_factor=filter_factor,)
+
+print("\n================ Model Summary ================\n")
+stf3d_model.summary()
+
+def print_model_layers(model, indent=0):
+    """Print layer-by-layer information, including nested models."""
+    prefix = " " * indent
+    for i, layer in enumerate(model.layers):
+        try:
+            input_shape = layer.input.shape
+        except (AttributeError, ValueError):
+            input_shape = "N/A"
+        try:
+            output_shape = layer.output.shape
+        except (AttributeError, ValueError):
+            output_shape = "N/A"
+
+        print(
+            f"{prefix}[{i:02d}] {layer.name:<30s} "
+            f"{layer.__class__.__name__:<20s} "
+            f"input={input_shape} output={output_shape} "
+            f"params={layer.count_params()}"
+        )
+
+        sublayer = getattr(layer, "layer", None)
+        if isinstance(sublayer, keras.Model):
+            print(f"{prefix}     -> nested model: {sublayer.name}")
+            print_model_layers(sublayer, indent=indent + 8)
+        elif isinstance(layer, keras.Model):
+            print_model_layers(layer, indent=indent + 8)
+
+print("\n================ Layer Information ================\n")
+print_model_layers(stf3d_model)
+print("\n===================================================\n")
 
 
 
